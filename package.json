@@ -6,6 +6,8 @@
   "scripts": {
     "start": "nodemon --watch restart.trigger apiServer.js",
     "start:dev": "nodemon --watch restart.trigger --ignore providers/.cache --ignore **/cache apiServer.js",
+    "start:mp4": "node vidzee-mp4.js",
+    "test": "node --test",
     "lint": "eslint . --ext .js"
   },
   "dependencies": {
