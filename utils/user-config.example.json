@@ -1,19 +1,20 @@
 {
-  "defaultProviders": [],
   "configVersion": 1,
   "tmdbApiKeys": [],
-  "enableShowboxProvider": true,
   "febboxCookies": [],
+  "defaultProviders": [],
+  "minQualitiesRaw": "all",
+  "excludeCodecsRaw": "{\"excludeDV\":false,\"excludeHDR\":false}",
   "enable4khdhubProvider": true,
   "enableMoviesmodProvider": true,
   "enableMp4hydraProvider": true,
+  "enableShowboxProvider": true,
+  "enableUhdmoviesProvider": true,
   "enableVidzeeProvider": true,
   "enableVixsrcProvider": true,
+  "enablePStreamApi": true,
   "enableProxy": false,
   "disableCache": false,
-  "enablePStreamApi": true,
   "disableUrlValidation": false,
-  "disable4khdhubUrlValidation": false,
-  "excludeCodecsRaw": "{\"excludeDV\":false,\"excludeHDR\":false}",
-  "minQualitiesRaw": "all"
+  "disable4khdhubUrlValidation": false
 }

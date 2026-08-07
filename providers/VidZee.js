@@ -1,6 +1,6 @@
 // VidZee provider: resolves streams for a TMDB id via VidZee.
-// Link decryption + server resolution live in ./vidzeeCrypto (VidZee rotated
-// their old AES-CBC "qrincywincyspider" scheme; the new GCM+CBC chain is there).
+// Server resolution lives in ./vidzeeCrypto, which tracks VidZee's current API
+// (they have rotated their scheme repeatedly; see that file's header).
 
 const { getAllStreams, STREAM_REFERER } = require('./vidzeeCrypto');
 
@@ -43,12 +43,12 @@ const getVidZeeStreams = async (tmdbId, mediaType, seasonNum, episodeNum) => {
     // VidZee no longer exposes a reliable quality label; default to 720p.
     const quality = '720p';
     return {
-      name: `VidZee Server${s.sr} - ${quality} - ${s.language}`,
-      title: `VidZee Server${s.sr} - ${quality} - ${s.language}`,
+      name: `VidZee ${s.sr} - ${quality} - ${s.language}`,
+      title: `VidZee ${s.sr} - ${quality} - ${s.language}`,
       url: s.url,
       quality,
       provider: 'VidZee',
-      headers: { Referer: STREAM_REFERER },
+      headers: { Referer: STREAM_REFERER, ...s.headers },
     };
   });
 

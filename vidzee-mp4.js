@@ -2,7 +2,7 @@
 //
 //   GET /movie/<tmdbId>                -> video/mp4 (movie)
 //   GET /tv/<tmdbId>/<season>/<ep>     -> video/mp4 (episode)
-//     ?sr=<n>        force a specific VidZee server
+//     ?sr=<name>     force a specific VidZee server (e.g. dcloud, v6:Hindi)
 //     ?download=1    send as an attachment instead of inline
 //
 // VidZee serves HLS; ffmpeg remuxes (-c copy, no re-encode) into a fragmented
@@ -12,17 +12,23 @@
 const http = require('http');
 const { spawn } = require('child_process');
 const axios = require('axios');
-const { getServerStreams, UA, STREAM_REFERER } = require('./providers/vidzeeCrypto');
+const {
+  getServerStreams,
+  UA,
+  STREAM_REFERER,
+  DEFAULT_SERVERS,
+} = require('./providers/vidzeeCrypto');
 
 const PORT = Number(process.env.MP4_PORT) || 6150;
 const HOST = process.env.MP4_HOST || '0.0.0.0';
 
-// Try Vietnamese/dubbed-heavy servers last so English wins when available.
-const SERVER_ORDER = [1, 2, 3, 4, 6, 7, 8, 9, 10, 5];
+// Already ordered with the dubbed server last, so English wins when available.
+const SERVER_ORDER = DEFAULT_SERVERS;
 
 function isEnglishish(language) {
   const l = String(language || '').trim().toLowerCase();
-  if (!l || l === 'unknown' || l === 'original' || l === 'default') return true;
+  // "auto" is what the dcloud server reports for its English audio.
+  if (!l || l === 'unknown' || l === 'original' || l === 'default' || l === 'auto') return true;
   return /english|^en$|^eng$/.test(l);
 }
 
@@ -39,18 +45,73 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
-// Cheap reachability probe: fetch the playlist with the CDN's expected headers.
-async function isOpenable(url) {
+// First non-comment line of an m3u8, resolved against the playlist's own URL.
+function firstPlaylistEntry(text, baseUrl) {
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const entry = line.trim();
+    if (!entry || entry.startsWith('#')) continue;
+    try {
+      return new URL(entry, baseUrl).toString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// The `ipcloud` server hides MPEG-TS behind a 70-byte 1x1 PNG header. ffmpeg
+// decodes the PNG, finds no media and aborts, so such a source is unplayable
+// for us even though its playlist fetches fine.
+const IMAGE_MAGIC = [
+  Buffer.from('89504e470d0a1a0a', 'hex'), // PNG
+  Buffer.from('ffd8ff', 'hex'), // JPEG
+  Buffer.from('GIF87a', 'ascii'),
+  Buffer.from('GIF89a', 'ascii'),
+];
+
+function looksLikeImage(buf) {
+  if (!buf || !buf.length) return false;
+  const head = Buffer.from(buf);
+  return IMAGE_MAGIC.some((magic) => head.subarray(0, magic.length).equals(magic));
+}
+
+async function fetchText(url, extraHeaders) {
+  const resp = await axios.get(url, {
+    headers: { 'User-Agent': UA, Referer: STREAM_REFERER, ...extraHeaders },
+    timeout: 8000,
+    maxContentLength: 4 * 1024 * 1024,
+    responseType: 'text',
+    transformResponse: [(d) => d],
+    validateStatus: (s) => s >= 200 && s < 300,
+  });
+  return typeof resp.data === 'string' ? resp.data : '';
+}
+
+// Reachability probe: fetch the playlist with the CDN's expected headers, then
+// sniff the first media segment so we never hand ffmpeg a source it can't open.
+async function isOpenable(url, extraHeaders = {}) {
   try {
-    const resp = await axios.get(url, {
-      headers: { 'User-Agent': UA, Referer: STREAM_REFERER },
+    let playlist = await fetchText(url, extraHeaders);
+    if (!playlist.includes('#EXTM3U')) return false;
+
+    let entryUrl = firstPlaylistEntry(playlist, url);
+    if (!entryUrl) return false;
+
+    // A master playlist points at a variant; follow one level to the segments.
+    if (playlist.includes('#EXT-X-STREAM-INF')) {
+      playlist = await fetchText(entryUrl, extraHeaders);
+      if (!playlist.includes('#EXTM3U')) return false;
+      entryUrl = firstPlaylistEntry(playlist, entryUrl);
+      if (!entryUrl) return false;
+    }
+
+    const seg = await axios.get(entryUrl, {
+      headers: { 'User-Agent': UA, Referer: STREAM_REFERER, Range: 'bytes=0-15', ...extraHeaders },
       timeout: 8000,
-      maxContentLength: 4 * 1024 * 1024,
-      responseType: 'text',
-      transformResponse: [(d) => d],
+      responseType: 'arraybuffer',
       validateStatus: (s) => s >= 200 && s < 300,
     });
-    return typeof resp.data === 'string' && resp.data.includes('#EXTM3U');
+    return !looksLikeImage(Buffer.from(seg.data));
   } catch {
     return false;
   }
@@ -71,7 +132,7 @@ async function selectStream({ tmdbId, type, season, episode, srOverride }) {
     }
     for (const s of streams) {
       // eslint-disable-next-line no-await-in-loop
-      if (!(await isOpenable(s.url))) continue;
+      if (!(await isOpenable(s.url, s.headers))) continue;
       if (isEnglishish(s.language)) return s;
       if (!fallback) fallback = s;
     }
@@ -143,7 +204,8 @@ async function handle(req, res, type, params, query) {
   if (type === 'tv' && (!/^\d+$/.test(season || '') || !/^\d+$/.test(episode || ''))) {
     return sendJson(res, 400, { error: 'tv requires numeric season and episode' });
   }
-  const srOverride = query.sr && /^\d+$/.test(query.sr) ? Number(query.sr) : null;
+  // Server ids are names now ("dcloud", "v6:Hindi"), not numbers.
+  const srOverride = typeof query.sr === 'string' && query.sr.trim() ? query.sr.trim() : null;
   const download = query.download === '1' || query.download === 'true';
   const filename =
     type === 'tv' ? `tv-${tmdbId}-s${season}e${episode}.mp4` : `movie-${tmdbId}.mp4`;
@@ -192,8 +254,15 @@ if (require.main === module) {
   createServer().listen(PORT, HOST, () => {
     console.log(`VidZee MP4 API listening on http://${HOST}:${PORT}`);
     console.log('  GET /movie/:tmdbId');
-    console.log('  GET /tv/:tmdbId/:season/:episode   (?sr=<n>, ?download=1)');
+    console.log('  GET /tv/:tmdbId/:season/:episode   (?sr=<name>, ?download=1)');
   });
 }
 
-module.exports = { createServer, requestListener, selectStream, isEnglishish };
+module.exports = {
+  createServer,
+  requestListener,
+  selectStream,
+  isEnglishish,
+  firstPlaylistEntry,
+  looksLikeImage,
+};

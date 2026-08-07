@@ -1,3 +1,10 @@
 /node_modules
 restart.trigger
 .vscode/
+
+# Secrets and per-deployment runtime state. auth-users.json is recreated with a
+# default admin/change-me login on first start; user-config.json is written by
+# the config panel. See utils/user-config.example.json.
+.env
+utils/auth-users.json
+utils/user-config.json

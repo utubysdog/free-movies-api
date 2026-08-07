@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.11] - 2026-08-06
+
+### Fixed
+- **Phantom `vidzeecrypto` provider**: `providers/registry.js` and `utils/config.js` each derived the provider list by scanning `providers/*.js` and subtracting a hand-maintained deny-list, so the `vidzeeCrypto.js` helper was treated as a provider — it appeared in `/api/providers` and `/api/status`, gained an `enableVidzeecryptoProvider` config flag, and logged `does not export undefined` on every aggregate request. Introduced `providers/catalog.js` as the single source of truth for provider name → file → exported function; both modules now read from it.
+- **Provider list ordering**: was `readdir()` order (filesystem-hash dependent, so it could differ between machines); now stable and alphabetical.
+
+### Security
+- `GET/POST /api/config`, `GET /api/debug/env` and `POST /api/restart` now require a session. `/api/config` returned the merged config — including TMDB API keys — and accepted arbitrary writes from any unauthenticated caller; `/config.html` was gated but the API behind it was not. The admin UI is unaffected (same-origin `fetch` sends the session cookie).
+- `utils/auth-users.json`, `utils/user-config.json` and `.env` are no longer tracked; they hold per-deployment credentials and state. `utils/auth-users.json` is recreated on first start with the documented `admin` / `change-me` default, and `utils/user-config.example.json` is provided as a template.
+
+### Changed
+- `apiServer.js`: removed the `process.exit` monkey-patch that silently swallowed every exit (no provider calls `process.exit`, so the guard was inert), plus the heartbeat interval and `beforeExit`/`exit`/`setImmediate` debug tracing left over from a past investigation. Deduplicated the two `/api/streams` handlers into a shared `collectStreams`, hoisted the inline `require('fs')` calls, and switched `public/` and `restart.trigger` path resolution from `process.cwd()` to `__dirname` so the server can be started from any directory.
+- `utils/config.js`: same `__dirname` fix for `user-config.json` resolution, extracted the repeated enable-flag/env-var name derivation into the catalog, and split `normalizeConfig` so the TMDB multi-key rules are readable. `normalizeConfig` and `parseCookies` are now exported for testing.
+- `providers/registry.js`: rewritten around the catalog; the Showbox global-state special case is isolated in one function with `try/finally` restore.
+
+### Added
+- `test/catalog.test.js` and `test/config.test.js` — 16 tests covering provider catalog integrity (every catalogued export exists; helpers are not providers) and config normalisation (TMDB key rules, boolean coercion, provider flag defaults, cookie parsing).
+
+## [1.0.10] - 2026-08-06
+
+### Fixed
+- **VidZee provider**: Rewritten for VidZee's rebuilt player. Both endpoints the previous implementation relied on now return 404 (`core.vidzee.wtf/api-key` and `player.vidzee.wtf/api/server`), so the whole AES-256-GCM → AES-256-CBC rotating-key chain is gone. The replacement API is `core.vidzee.wtf/streams/{movie|tv}/<tmdbId>[/<season>/<episode>]?s=<server>&e=<0|1>`, where `e` selects the response encoding: `e=1` returns `{"c": "<blob>"}` that the player decrypts in WebAssembly, `e=0` returns the stream URL in plaintext. We request `e=0`, which removes the need for any decryption. Servers are named ids now (`dcloud`, `tik`, `ipcloud`, `v6:Hindi`) instead of numbers `1..10`, so `?sr=` on the MP4 API takes a name.
+- **VidZee stream headers**: Stream requests now send `Referer: https://player.vidzee.wtf/` instead of the stale `https://core.vidzee.wtf/`. `cdn1.1shows.app` 403s on the old value; every CDN that accepted the old one accepts this too.
+- **MP4 API source selection**: The openability probe now follows a master playlist to its first media segment and sniffs the magic bytes. The `ipcloud` server wraps its MPEG-TS segments in a 70-byte 1×1 PNG header, which ffmpeg decodes as a still image and then aborts with "Output file does not contain any stream"; such sources are now skipped instead of being handed to ffmpeg. `"Auto"` (what `dcloud` reports for English audio) counts as English for server preference ordering.
+
+### Removed
+- `decryptApiKeyBlob`, `decryptLink` and `getRotatingKey` from `providers/vidzeeCrypto.js`, plus the `test/fixtures/vidzee-sample.json` fixture — all pinned a scheme VidZee no longer serves.
+
 ## [1.0.9] - 2025-11-19
 
 ### Removed

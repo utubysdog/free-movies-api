@@ -6,9 +6,13 @@
   <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat" />
   <img src="https://img.shields.io/badge/Status-Active-success?style=flat" />
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat" />
-  <img src="https://img.shields.io/badge/Version-1.0.9-informational?style=flat" />
+  <img src="https://img.shields.io/badge/Version-1.0.11-informational?style=flat" />
   <img src="https://img.shields.io/docker/pulls/inside4ndroid/tmdb-embed-api?label=Docker%20Pulls&style=flat" />
 </p>
+
+> **This is a fork** of [Inside4ndroid/TMDB-Embed-API](https://github.com/Inside4ndroid/TMDB-Embed-API)
+> (MIT, © 2025 Inside4ndroid). It adds a VidZee→MP4 streaming endpoint and tracks
+> VidZee's current API. See [CHANGELOG.md](CHANGELOG.md) for what diverges from upstream.
 
 ---
 
@@ -35,7 +39,7 @@
 ## ✨ Features
 - **Multi‑TMDB Key Rotation** – Supply multiple API keys; one is chosen randomly per request.
 - **Provider Aggregation** – Pluggable providers (4khdhub, MoviesMod, MP4Hydra, VidZee, Vixsrc, UHDMovies) with per‑provider enable toggles + default selection.
-- **🔥 Plugin System** – Drop new provider files in `providers/` and add its exported function to the registry map (`providers/registry.js` → `providerFunctionMap`).
+- **🔥 Plugin System** – Add new provider files to `providers/` and declare them in `providers/catalog.js`.
 - **Dynamic Filtering** – Minimum quality presets, custom JSON quality map, codec exclusion rules (presets + JSON).
 - **Runtime Overrides UI** – Fully interactive web admin at `/` (login protected) writing to `utils/user-config.json`.
 - **Session Auth + Rate Limiting** – Login system with brute‑force lockouts, logout, password change.
@@ -222,34 +226,38 @@ Session is revalidated on visibility and back/forward navigation to prevent stal
 ---
 
 ## 🔌 Providers
-The API supports a plugin system. Drop a new provider file in the `providers/` folder and register its exported function in `providers/registry.js` under `providerFunctionMap`.
+Providers are declared in `providers/catalog.js`, which is the single source of
+truth for which modules are providers and what each one exports. `registry.js`
+(runtime wiring) and `utils/config.js` (enable flags) both read from it.
 
 ### Current Built-in Providers
 - `4khdhub` - 4KHDHub streams
 - `moviesmod` - MoviesMod streams  
 - `mp4hydra` - MP4Hydra streams
+- `showbox` - Showbox / FebBox streams (needs a FebBox cookie)
 - `vidzee` - VidZee streams
 - `vixsrc` - Vixsrc streams
 - `uhdmovies` - UHD Movies streams
 
-
 ### Adding a New Provider
 1. **Create** `providers/yourprovider.js` with your stream fetching logic
 2. **Export** a function like `getYourproviderStreams(tmdbId, mediaType, season, episode)`
-3. **Register** it in `providers/registry.js` → `providerFunctionMap`:
+3. **Register** it in `providers/catalog.js`:
    ```js
-   // providers/registry.js
-   const providerFunctionMap = {
-     '4khdhub.js': 'get4KHDHubStreams',
-     'moviesmod.js': 'getMoviesModStreams',
-     'MP4Hydra.js': 'getMP4HydraStreams',
-     'VidZee.js': 'getVidZeeStreams',
-     'vixsrc.js': 'getVixsrcStreams',
-  'uhdmovies.js': 'getUHDMoviesStreams',
-     'yourprovider.js': 'getYourproviderStreams'
-   };
+   // providers/catalog.js
+   const PROVIDERS = [
+     // …existing entries…
+     { name: 'yourprovider', file: 'yourprovider.js', export: 'getYourproviderStreams' },
+   ];
    ```
-4. The provider will appear in the admin UI with an enable/disable toggle.
+4. The provider will appear in the admin UI with an enable/disable toggle, and
+   gets an `enableYourproviderProvider` config flag (defaulting to enabled).
+
+> Registration is explicit on purpose. The catalog used to be inferred by
+> scanning `providers/*.js` minus a deny-list, which meant any helper module
+> dropped in the folder became a phantom provider — `vidzeeCrypto.js` showed up
+> in `/api/providers` and errored on every aggregate request. Helper modules are
+> simply left out of the catalog.
 
 **Example Provider (Unified Output):**
 ```javascript
@@ -269,12 +277,11 @@ module.exports = { getYourproviderStreams };
 
 > **⚠️ Important**: All providers must return streams in the unified JSON format to ensure compatibility with filtering and aggregation.
 
-The system automatically:
-- ✅ Detects new provider files
+Once catalogued, the system automatically:
 - ✅ Adds enable/disable toggles in the admin UI
 - ✅ Includes them in stream aggregation
 - ✅ Applies filtering and quality controls
-- ✅ No core file edits required!
+- ✅ Keeps a failing provider from breaking an aggregate request
 
 ---
 
@@ -288,8 +295,9 @@ The system automatically:
 | `GET /api/providers/:name` | Single provider status |
 | `GET /api/streams/:type/:tmdbId` | Aggregate streams (`type` = movie|series) |
 | `GET /api/streams/:provider/:type/:tmdbId` | Provider-specific streams |
-| `GET /api/config` | `{ merged, override }` |
-| `POST /api/config` | Apply override patch |
+| `GET /api/config` | `{ merged, override }` — **requires a session** |
+| `POST /api/config` | Apply override patch — **requires a session** |
+| `POST /api/restart` | Restart the process — **requires a session** |
 
 Aggregate endpoint auto-resolves IMDb when needed and merges provider output before filtering.
 
@@ -337,10 +345,21 @@ Toggle `enableProxy` to activate the internal proxy. This adds lightweight playl
 ---
 
 ## 🔐 Security Notes
+- **Change the default password.** First start creates `admin` / `change-me`. That
+  file is no longer committed, but any deployment left on the default is open.
+- `/api/config`, `/api/debug/env` and `/api/restart` require a session. They expose
+  TMDB keys and accept writes, so they are not safe to leave unauthenticated.
 - Admin UI requires login; session cookie is HttpOnly.
 - Cache-control headers disable storing sensitive pages.
 - Login is rate limited with escalating lockouts.
 - Password change endpoint enforces minimum length.
+- `utils/auth-users.json`, `utils/user-config.json` and `.env` are gitignored —
+  they hold per-deployment credentials and state. Start from
+  `utils/user-config.example.json`.
+
+> The API has no authentication on the stream endpoints and is not intended to be
+> exposed to the public internet. Put it behind a VPN, or a reverse proxy that
+> requires auth.
 
 ---
 
