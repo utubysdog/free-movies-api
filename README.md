@@ -1,418 +1,417 @@
-# 🍿 TMDB Embed API
+# 🍿 TMDB Embed API — VidZee fork
 
-> Modern, configurable streaming metadata + source aggregation API with a secure admin panel and multi-key TMDB rotation.
+> Give it a TMDB id, get back a playable stream — or the movie itself as an MP4.
 
 <p align="center">
   <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat" />
-  <img src="https://img.shields.io/badge/Status-Active-success?style=flat" />
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat" />
   <img src="https://img.shields.io/badge/Version-1.0.11-informational?style=flat" />
-  <img src="https://img.shields.io/docker/pulls/inside4ndroid/tmdb-embed-api?label=Docker%20Pulls&style=flat" />
+  <img src="https://img.shields.io/badge/ffmpeg-required-orange?style=flat" />
 </p>
 
-> **This is a fork** of [Inside4ndroid/TMDB-Embed-API](https://github.com/Inside4ndroid/TMDB-Embed-API)
-> (MIT, © 2025 Inside4ndroid). It adds a VidZee→MP4 streaming endpoint and tracks
-> VidZee's current API. See [CHANGELOG.md](CHANGELOG.md) for what diverges from upstream.
+A fork of [Inside4ndroid/TMDB-Embed-API](https://github.com/Inside4ndroid/TMDB-Embed-API)
+(MIT, © 2025 Inside4ndroid) that has drifted a long way from upstream in two respects:
+
+1. **VidZee is the only provider that still works.** The other six are inherited from
+   upstream and currently return nothing on every title tested. See [Providers](#-providers).
+2. **It gained a download/streaming API.** `vidzee-mp4.js` serves the actual video as
+   `video/mp4` — point VLC, mpv, a browser `<video>`, or `curl -O` at a URL and it plays
+   or saves. That's the part this fork exists for.
 
 ---
 
-## 📸 Screenshots
-<p align="center">
-  <img src="screenshots/Screenshot 2025-09-16 174931.png" width="46%" />
-  <img src="screenshots/Screenshot 2025-09-16 175002.png" width="46%" />
-</p>
-<p align="center">
-  <img src="screenshots/Screenshot 2025-09-16 175008.png" width="46%" />
-  <img src="screenshots/Screenshot 2025-09-16 175013.png" width="46%" />
-</p>
-<p align="center">
-  <img src="screenshots/Screenshot 2025-09-16 175020.png" width="46%" />
-  <img src="screenshots/Screenshot 2025-09-16 175026.png" width="46%" />
-</p>
-<p align="center">
-  <img src="screenshots/Screenshot 2025-09-16 175033.png" width="46%" />
-  <img src="screenshots/Screenshot 2025-09-16 175040.png" width="46%" />
-</p>
+## 🧭 The two servers
+
+This repo runs two independent processes. You can run either on its own.
+
+| | `apiServer.js` | `vidzee-mp4.js` |
+|---|---|---|
+| **Default port** | `8787` | `6150` |
+| **Returns** | JSON list of stream URLs | the video itself, as `video/mp4` |
+| **Start** | `npm start` | `npm run start:mp4` |
+| **Needs ffmpeg** | no | **yes** |
+| **Admin UI** | yes, at `/` | no |
+| **Use it for** | feeding a player/addon that wants source URLs | watching or downloading directly |
 
 ---
 
-## ✨ Features
-- **Multi‑TMDB Key Rotation** – Supply multiple API keys; one is chosen randomly per request.
-- **Provider Aggregation** – Pluggable providers (4khdhub, MoviesMod, MP4Hydra, VidZee, Vixsrc, UHDMovies) with per‑provider enable toggles + default selection.
-- **🔥 Plugin System** – Add new provider files to `providers/` and declare them in `providers/catalog.js`.
-- **Dynamic Filtering** – Minimum quality presets, custom JSON quality map, codec exclusion rules (presets + JSON).
-- **Runtime Overrides UI** – Fully interactive web admin at `/` (login protected) writing to `utils/user-config.json`.
-- **Session Auth + Rate Limiting** – Login system with brute‑force lockouts, logout, password change.
-- **Status & Health Panel** – Live metrics, provider status, endpoint list, functional provider checks.
-- **Config Propagation** – Overrides mirrored to `process.env` for legacy compatibility (no `.env` required after first save).
-- **Back‑Navigation Safe** – Cache-control + visibility/session revalidation.
-- **Extensible** – Simple drop-in provider plugin system.
-- **Optional Stream Proxy Layer** – When enabled, rewrites returned stream URLs so HLS playlists, TS segments, and subtitles are served through internal endpoints (`/m3u8-proxy`, `/ts-proxy`, `/sub-proxy`) allowing uniform headers, origin shielding, and optional segment caching.
-  When active the API omits per-stream `headers` objects from responses (they're no longer needed by clients) to avoid leaking upstream header requirements.
+## 📦 Requirements
 
-  Proxy Tuning Parameters (query flags accepted by `/ts-proxy` – defaults shown):
-  - `clampOpen` (on) – If a client sends an ambiguous `Range: bytes=0-`, constrain it to an initial window of `openChunkKB` (default 4096 KB) to avoid huge first reads.
-  - `openChunkKB=4096` – Size (KB) used for both clamp window and each progressive expansion increment.
-  - `progressiveOpen` (on) – Grow successive ambiguous head requests (`bytes=0-`) incrementally instead of one large span. Maintains a per‑URL expansion map.
-  - `initChunkKB=512` – Size used for a synthetic initial partial (206) when no client range is provided and progressive growth is disabled. Capped 64–2048 KB.
-  - `noSynth=1` – Disable synthetic initial partial generation (forces pass‑through behavior).
-  - `force200=1` – Normalize upstream 206 responses to 200 (diagnostics / edge player testing).
-  - `tailPrefetch` (on) – Enable asynchronous tail fetch of the file’s last bytes to satisfy rapid player tail probes.
-  - `tailPrefetchKB=256` – Tail window size (64–2048 KB). Cached in memory with TTL cleanup.
-  Behavior Notes:
-  - Synthetic partials auto‑disable when `progressiveOpen` is active (real progressive ranges preferred).
-  - Player tail probes (e.g., VLC metadata scans) are accelerated by the cached tail window.
-  - Forced 200 mode strips `Content-Range` to emulate full responses for troubleshooting.
-  - Host Overrides: `pixeldrain.*` and `video-downloads.googleusercontent.com` URLs are routed through `/ts-proxy` regardless of extension to ensure correct range + MIME handling.
+- **Node.js 18+**
+- **ffmpeg + ffprobe** on `PATH` — only for the MP4 API. Ubuntu/Debian: `sudo apt install ffmpeg`
+- A **TMDB API key** is optional; VidZee is keyed by TMDB id but needs no key of your own.
+  Keys only matter for the IMDb resolution and the (dead) Showbox provider.
 
----
-
-## 📦 Quick Start
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. (Optional) Copy example env if you want an initial TMDB key
-cp .env.example .env   # then edit TMDB_API_KEY=
-
-# 3. Start API with automatic restarts (recommended for local dev)
-npm start
-
-# Or production-style single run
-# node apiServer.js
-
-# 4. Open the Admin UI (login page) in browser
-http://localhost:8787/
-
-# 5. Health check
-curl http://localhost:8787/api/health
 ```
 
 ---
 
-## 🐳 Docker Usage
+## 🎬 MP4 / Download API (`:6150`)
 
-### Pull & Run (Fastest)
-If you just want to run it (no building):
+The centrepiece of this fork. Resolves a VidZee source, then remuxes its HLS stream into
+a fragmented MP4 with `ffmpeg -c copy` — no re-encoding, so it's cheap and keeps the
+original H.264/AAC quality.
+
 ```bash
-docker pull inside4ndroid/tmdb-embed-api:latest
-docker run --name tmdb-embed-api -p 8787:8787 \ 
-  -e TMDB_API_KEY=YOUR_TMDB_KEY \
-  inside4ndroid/tmdb-embed-api:latest
+npm run start:mp4          # or: node vidzee-mp4.js
 ```
 
-Or the minimal quick-test run:
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /movie/<tmdbId>` | the movie as `video/mp4` |
+| `GET /tv/<tmdbId>/<season>/<episode>` | the episode as `video/mp4` |
+| `GET /health` | `{ ok: true, service: "vidzee-mp4" }` |
+
+| Query | Purpose |
+|-------|---------|
+| `?download=1` | send `Content-Disposition: attachment` — saves instead of playing in-browser |
+| `?sr=<name>` | force a specific VidZee server instead of auto-selecting |
+
+### Examples
+
 ```bash
-docker run -it -p 8787:8787 inside4ndroid/tmdb-embed-api:latest
+# Stream Fight Club in your player
+vlc http://localhost:6150/movie/550
+
+# Save it to disk (filename comes from Content-Disposition)
+curl -OJ "http://localhost:6150/movie/550?download=1"
+
+# Breaking Bad S01E01
+mpv http://localhost:6150/tv/1396/1/1
+
+# Force a particular source
+curl -o out.mp4 "http://localhost:6150/movie/550?sr=dcloud"
 ```
 
-Persist overrides (Windows PowerShell example) by mounting a local file:
-```powershell
-New-Item -ItemType File -Path .\utils\user-config.json -Force | Out-Null
-docker run --name tmdb-embed-api -p 8787:8787 `
-  -e TMDB_API_KEY=YOUR_TMDB_KEY `
-  -v ${PWD}/utils/user-config.json:/app/utils/user-config.json `
-  inside4ndroid/tmdb-embed-api:latest
-```
+Or just open `http://localhost:6150/movie/550` in a browser and it plays inline.
 
-### Build Locally
-```bash
-docker build -t tmdb-embed-api .
-docker run --name tmdb-embed -p 8787:8787 \
-  -e TMDB_API_KEY=YOUR_TMDB_KEY \
-  -v "$(pwd)/utils/user-config.json:/app/utils/user-config.json" \
-  tmdb-embed-api
-```
+### How a source gets picked
 
-After first login + save, the UI writes overrides into the mounted `user-config.json` so they persist across container restarts.
+1. Walk VidZee's servers in order — `dcloud`, `tik`, `ipcloud`, `v6:Hindi` — with the
+   Hindi dub last so English wins when it's available. `?sr=` skips straight to one.
+2. For each candidate, **probe that it's actually playable**: fetch the playlist, follow a
+   master playlist to its first media segment, and sniff the magic bytes. This is not
+   paranoia — the `ipcloud` server wraps its MPEG-TS segments in a 70-byte 1×1 PNG header,
+   which ffmpeg decodes as a still image before aborting with *"Output file does not
+   contain any stream"*. Image-wrapped sources are skipped.
+3. Use the first English source that passes; otherwise fall back to the first playable
+   source in any language.
 
-### docker-compose
-An example `docker-compose.yml` is included. Start with:
-```bash
-docker compose up -d --build
-```
-Environment variables can be supplied via a `.env` file in the same directory (Compose automatically loads it). Example `.env`:
-```
-TMDB_API_KEY=first_key
-```
+Servers come and go per title — a dead one answers `502`, and it's normal for only one or
+two of the four to work for any given film.
 
-To stop & remove:
-```bash
-docker compose down
-```
+### Errors
 
-### Switching to Multiple TMDB Keys
-Either set `TMDB_API_KEYS` to a JSON array string:
-```bash
-docker run -p 8787:8787 \
-  -e TMDB_API_KEYS='["KEY1","KEY2","KEY3"]' \
-  tmdb-embed-api
-```
-or add / remove keys inside the Admin UI (Keys panel) and save.
+| Status | Meaning |
+|--------|---------|
+| `400` | non-numeric tmdbId, or a TV request missing season/episode |
+| `404` | no server produced a playable source |
+| `502` | a source was selected but ffmpeg couldn't remux it |
 
-### Key Environment Variables
-| Variable | Purpose | Notes |
-|----------|---------|-------|
-| `API_PORT` | Port the server listens on | Defaults to 8787 |
-| `TMDB_API_KEY` | Single TMDB key (legacy) | Use if you only have one key |
-| `TMDB_API_KEYS` | JSON array of keys | Overrides single key when present |
-| `PASSWORD_HASH` | Pre-seed admin password hash | Optional (UI can set) |
-| `ADMIN_USERNAME` | Override default username | Default: `admin` |
+### Known limitations
 
-If both `TMDB_API_KEY` and `TMDB_API_KEYS` are provided, rotation uses the array. Clearing the array in the UI also clears the legacy key.
+- **Seeking is limited.** The output is a live fragmented-MP4 pipe with no known total
+  length. Playback from the start and full downloads work; scrubbing to an arbitrary
+  position is unreliable. True seeking would mean producing the whole file first.
+- One `ffmpeg` process per active stream. Fine for personal use, not a public service.
+- Clients that abort get their `ffmpeg` child killed, so no orphans accumulate.
+
+### Environment
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MP4_PORT` | `6150` | listen port |
+| `MP4_HOST` | `0.0.0.0` | bind address |
 
 ---
 
-### Updating the Image
-```bash
-docker compose pull   # if using an external registry (future)
-docker compose up -d --build
+## 📡 Aggregator API (`:8787`)
 
-### Restart from Admin UI
-The Admin panel includes a Restart Server control.
-- Local (nodemon): the backend writes a `restart.trigger` file and exits; nodemon detects the change and restarts automatically.
-- Docker Compose: the container exits and is restarted by `restart: unless-stopped`.
+The inherited upstream server: queries every enabled provider in parallel and returns a
+merged, filtered list of stream URLs as JSON. In this fork that means "returns VidZee's
+streams", since nothing else resolves.
+
+```bash
+npm start                  # nodemon, restarts on the admin-UI restart button
+node apiServer.js          # plain single run
 ```
 
-### Healthcheck
-Container health relies on `GET /api/health`. If you disable or modify that route, adjust the Dockerfile / compose healthcheck accordingly.
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/health` | heartbeat |
+| `GET /api/metrics` | runtime counters |
+| `GET /api/status` | metrics + providers + endpoint list |
+| `GET /api/providers` | provider list |
+| `GET /api/providers/:name` | single provider status |
+| `GET /api/streams/:type/:tmdbId` | aggregate streams (`type` = `movie` \| `series`) |
+| `GET /api/streams/:provider/:type/:tmdbId` | one provider only |
+| `GET /api/config` | `{ merged, override }` — **requires a session** |
+| `POST /api/config` | apply an override patch — **requires a session** |
+| `POST /api/restart` | restart the process — **requires a session** |
 
----
+TV uses `?season=` and `?episode=`:
 
-## �🔐 Authentication
-The root (`/`) serves the login page. After successful login a session cookie (`session`) is issued (HttpOnly; 12h lifetime). All admin pages (e.g. `config.html`) require an active session.
+```bash
+curl "http://localhost:8787/api/streams/movie/550"
+curl "http://localhost:8787/api/streams/series/1396?season=1&episode=1"
+curl "http://localhost:8787/api/streams/vidzee/movie/550"
+```
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/auth/login` | POST | Authenticate (JSON: `{ username, password }`) |
-| `/auth/logout` | POST | Destroy session |
-| `/auth/session` | GET | Check session status |
-| `/auth/change-password` | POST | Update password (requires session) |
+### Stream object
 
-Repeated failed logins trigger exponential lockouts (Retry-After header emitted).
-
----
-
-## 🛠 Configuration Model
-All runtime state collapses into a *merged* object displayed in the UI (Live Config panel). Source order:
-1. Initial environment variables / optional `.env`
-2. JSON overrides: `utils/user-config.json`
-
-Saving in the UI writes only changed keys. Setting a field to empty removes the override (reverting to env/default). Removing all TMDB keys (and saving) clears `tmdbApiKeys` and the legacy `tmdbApiKey`.
-
-**Override File:** `utils/user-config.json`
 ```json
 {
-  "defaultProviders": ["4khdhub","moviesmod"],
-  "tmdbApiKeys": ["KEY_A","KEY_B"],
-  "enable4khdhubProvider": true
+  "name":  "VidZee dcloud - 720p - Auto",
+  "title": "VidZee dcloud - 720p - Auto",
+  "url":   "https://cdn2.1shows.app/movie/…/index.m3u8",
+  "quality": "720p",
+  "provider": "VidZee",
+  "headers": { "Referer": "https://player.vidzee.wtf/" }
 }
 ```
 
----
+> The `headers` must be sent when fetching `url`, or the CDN returns `403`.
+> When `enableProxy` is on, URLs are rewritten through the internal proxy and `headers`
+> is omitted (the proxy applies them for you).
 
-## 🎛 Admin UI Sections
-| Panel | Summary |
-|-------|---------|
-| Core | Port, default providers, default region |
-| Quality / Filters | Min quality presets & codec exclusion JSON |
-| Keys | Add/remove TMDB API keys (rotated randomly) |
-| Advanced | Provider toggles, cache & validation flags |
-| Server Status | Live metrics, provider functional checks |
-| Live Config | View merged + override JSON snapshots |
+### Admin UI
 
-Session is revalidated on visibility and back/forward navigation to prevent stale access.
+Served at `/` behind a login. Provider toggles, TMDB keys, quality/codec filters, live
+metrics and a merged-config view. Inherited from upstream and unchanged.
+
+<p align="center">
+  <img src="screenshots/Screenshot 2025-09-16 174931.png" width="46%" />
+  <img src="screenshots/Screenshot 2025-09-16 175020.png" width="46%" />
+</p>
 
 ---
 
 ## 🔌 Providers
-Providers are declared in `providers/catalog.js`, which is the single source of
-truth for which modules are providers and what each one exports. `registry.js`
-(runtime wiring) and `utils/config.js` (enable flags) both read from it.
 
-### Current Built-in Providers
-- `4khdhub` - 4KHDHub streams
-- `moviesmod` - MoviesMod streams  
-- `mp4hydra` - MP4Hydra streams
-- `showbox` - Showbox / FebBox streams (needs a FebBox cookie)
-- `vidzee` - VidZee streams
-- `vixsrc` - Vixsrc streams
-- `uhdmovies` - UHD Movies streams
+Providers are declared in **`providers/catalog.js`** — the single source of truth for
+which modules are providers and what each exports. `providers/registry.js` (runtime wiring) and
+`utils/config.js` (enable flags) both read from it.
 
-### Adding a New Provider
-1. **Create** `providers/yourprovider.js` with your stream fetching logic
-2. **Export** a function like `getYourproviderStreams(tmdbId, mediaType, season, episode)`
-3. **Register** it in `providers/catalog.js`:
+| Provider | Status |
+|----------|--------|
+| `vidzee` | ✅ **working** — the only one that returns streams |
+| `4khdhub` | ⚠️ inherited, returns nothing |
+| `moviesmod` | ⚠️ inherited, returns nothing |
+| `mp4hydra` | ⚠️ inherited, returns nothing |
+| `uhdmovies` | ⚠️ inherited, returns nothing |
+| `vixsrc` | ⚠️ inherited, returns nothing |
+| `showbox` | ⚠️ inherited; also needs a FebBox cookie, which isn't configured |
+
+The dead ones are left enabled because they fail fast and harmlessly (a failing provider
+can't break an aggregate request). Turn them off in the Advanced panel to shave a few
+hundred ms off each call.
+
+### Adding a provider
+
+1. Create `providers/yourprovider.js` exporting
+   `getYourproviderStreams(tmdbId, mediaType, season, episode)`.
+2. Declare it in `providers/catalog.js`:
    ```js
-   // providers/catalog.js
-   const PROVIDERS = [
-     // …existing entries…
-     { name: 'yourprovider', file: 'yourprovider.js', export: 'getYourproviderStreams' },
-   ];
+   { name: 'yourprovider', file: 'yourprovider.js', export: 'getYourproviderStreams' },
    ```
-4. The provider will appear in the admin UI with an enable/disable toggle, and
-   gets an `enableYourproviderProvider` config flag (defaulting to enabled).
+3. It appears in the admin UI with a toggle and gets an `enableYourproviderProvider` flag,
+   defaulting to enabled.
 
-> Registration is explicit on purpose. The catalog used to be inferred by
-> scanning `providers/*.js` minus a deny-list, which meant any helper module
-> dropped in the folder became a phantom provider — `vidzeeCrypto.js` showed up
-> in `/api/providers` and errored on every aggregate request. Helper modules are
-> simply left out of the catalog.
+Return the unified stream shape shown above, or filtering and aggregation won't apply.
 
-**Example Provider (Unified Output):**
-```javascript
-async function getYourproviderStreams(tmdbId, mediaType, season, episode) {
-  // Your scraping/API logic here
-  return [{
-    title: "Fight Club - 1080p [YourProvider #1]",
-    url: "https://stream.url/video.mp4",
-    quality: "1080p",
-    provider: "yourprovider",
-    headers: { "User-Agent": "Mozilla/5.0" }
-  }];
-}
+> Registration is explicit on purpose. The catalog used to be inferred by scanning
+> `providers/*.js` minus a deny-list, so any helper module dropped in the folder became a
+> phantom provider — `providers/vidzeeCrypto.js` showed up in `/api/providers`, gained a config
+> flag, and errored on every aggregate request.
 
-module.exports = { getYourproviderStreams };
+---
+
+## 🔓 How the VidZee provider works
+
+VidZee rotates its scheme every few months, and each rotation breaks this fork. The
+current (2026-08) shape, in `providers/vidzeeCrypto.js`:
+
+```
+GET core.vidzee.wtf/streams/movie/<tmdbId>?s=<server>&e=<0|1>
+GET core.vidzee.wtf/streams/tv/<tmdbId>/<season>/<episode>?s=<server>&e=<0|1>
 ```
 
-> **⚠️ Important**: All providers must return streams in the unified JSON format to ensure compatibility with filtering and aggregation.
+`e` selects the response encoding, and it's the client's choice:
 
-Once catalogued, the system automatically:
-- ✅ Adds enable/disable toggles in the admin UI
-- ✅ Includes them in stream aggregation
-- ✅ Applies filtering and quality controls
-- ✅ Keeps a failing provider from breaking an aggregate request
+- `e=1` → `{"c":"<blob>"}`, which the browser player decrypts in WebAssembly
+- `e=0` → `{"url":"…","language":"…","headers":{}}` in plaintext
 
----
+So this fork asks for `e=0` and skips the crypto entirely. Servers are named ids
+(`dcloud`, `tik`, `ipcloud`, `v6:Hindi`), not the numbers `1..10` older versions used.
 
-## 📡 Key Endpoints
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/health` | Basic heartbeat |
-| `GET /api/metrics` | Runtime counters & summary |
-| `GET /api/status` | Metrics + providers + endpoints list |
-| `GET /api/providers` | Enabled providers summary |
-| `GET /api/providers/:name` | Single provider status |
-| `GET /api/streams/:type/:tmdbId` | Aggregate streams (`type` = movie|series) |
-| `GET /api/streams/:provider/:type/:tmdbId` | Provider-specific streams |
-| `GET /api/config` | `{ merged, override }` — **requires a session** |
-| `POST /api/config` | Apply override patch — **requires a session** |
-| `POST /api/restart` | Restart the process — **requires a session** |
+Stream requests need `Referer: https://player.vidzee.wtf/` — the *player* origin.
+`cdn1.1shows.app` returns `403` for the older `core.vidzee.wtf` value.
 
-Aggregate endpoint auto-resolves IMDb when needed and merges provider output before filtering.
+**When it breaks again:** the endpoints will start returning `404`. Pull
+`player.vidzee.wtf/embed/movie/550`, grab the `/assets/*.js` bundles it preloads, and look
+in the lazy `Ads-*.js` chunk — that's where the stream fetch lives. It's packed with
+obfuscator.io's RC4 string table, so you'll need to eval the decoder to read it. Check for
+a plaintext opt-out like `e=0` before reimplementing any crypto. The constants to update
+all sit at the top of `providers/vidzeeCrypto.js`.
 
 ---
 
-## 🧪 Stream Object Schema (Unified)
-```json
-{
-  "title": "Fight Club - 1080p [MP4Hydra #2]",
-  "url": "https://stream.url/video.mp4",
-  "quality": "1080p",
-  "provider": "mp4hydra",
-  "headers": { "User-Agent": "Mozilla/5.0" }
-}
+## 🛠 Configuration
+
+Environment variables provide defaults; `utils/user-config.json` overrides them; the
+result is mirrored back into `process.env` so older provider code sees the same values.
+The admin UI writes only changed keys — clearing a field removes the override.
+
+Start from the template:
+
+```bash
+cp utils/user-config.example.json utils/user-config.json
 ```
 
-Filtering passes through `applyFilters` to enforce min quality + codec exclusions.
+| Variable | Purpose | Notes |
+|----------|---------|-------|
+| `API_PORT` | aggregator port | default `8787` |
+| `MP4_PORT` | MP4 API port | default `6150` |
+| `TMDB_API_KEY` | single TMDB key (legacy) | optional |
+| `TMDB_API_KEYS` | JSON array of keys | rotated randomly; overrides the single key |
+| `BIND_HOST` | aggregator bind address | default `0.0.0.0` |
 
-> Note: When the `enableProxy` flag is turned on, provider-specific request headers are stripped from each stream object before responding. Clients should use the proxied URL directly without adding custom Referer/Origin headers.
+> Upstream's README also lists `ADMIN_USERNAME` and `PASSWORD_HASH`. Neither is read by
+> any code in this repo — the admin user is hardcoded to `admin` and created on first
+> start. They're omitted here rather than documented as working.
 
----
+### Quality & codec filtering
 
-## ⚙️ Configuration Flags (Advanced Panel)
-| Flag | Default | Purpose |
-|------|---------|---------|
-| disableCache | false | Disables internal caches |\n| disableUrlValidation | false | Skip general URL pattern validation checks |
-| disable4khdhubUrlValidation | false | Skip 4khdhub-specific URL validation |
-| enableProxy | false | Mounts proxy routes and rewrites stream URLs through them |
+Presets `all`, `480p`, `720p`, `1080p`, `1440p`, `2160p`, or per-provider JSON:
 
-Toggle `enableProxy` to activate the internal proxy. This adds lightweight playlist/segment/subtitle rewriting without modifying provider code. Disable it to return direct upstream URLs.
-
----
-
-## 🧩 Quality & Codec Filtering
-- Presets: `all`, `480p`, `720p`, `1080p`, `1440p`, `2160p`.
-- Custom quality JSON example:
 ```json
 { "default": "900p", "4khdhub": "1080p" }
-```
-- Codec exclusion JSON example:
-```json
 { "excludeDV": true, "excludeHDR": false }
 ```
 
----
+### Optional proxy layer
 
-## 🔐 Security Notes
-- **Change the default password.** First start creates `admin` / `change-me`. That
-  file is no longer committed, but any deployment left on the default is open.
-- `/api/config`, `/api/debug/env` and `/api/restart` require a session. They expose
-  TMDB keys and accept writes, so they are not safe to leave unauthenticated.
-- Admin UI requires login; session cookie is HttpOnly.
-- Cache-control headers disable storing sensitive pages.
-- Login is rate limited with escalating lockouts.
-- Password change endpoint enforces minimum length.
-- `utils/auth-users.json`, `utils/user-config.json` and `.env` are gitignored —
-  they hold per-deployment credentials and state. Start from
-  `utils/user-config.example.json`.
-
-> The API has no authentication on the stream endpoints and is not intended to be
-> exposed to the public internet. Put it behind a VPN, or a reverse proxy that
-> requires auth.
+`enableProxy` mounts `/m3u8-proxy`, `/ts-proxy` and `/sub-proxy`, and rewrites stream URLs
+through them so playlists, segments and subtitles are served with uniform headers. Off by
+default. `/ts-proxy` accepts range-negotiation flags (`clampOpen`, `openChunkKB`,
+`progressiveOpen`, `initChunkKB`, `noSynth`, `force200`, `tailPrefetch`, `tailPrefetchKB`)
+— see `proxy/proxyServer.js` for the details and defaults.
 
 ---
 
-## 🚀 Deployment Tips
+## 🔐 Authentication & security
+
+The aggregator's root (`/`) serves a login page; a successful login issues an HttpOnly
+`session` cookie valid 12h. Repeated failures trigger exponential lockouts with a
+`Retry-After` header.
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/auth/login` | POST | `{ username, password }` |
+| `/auth/logout` | POST | destroy session |
+| `/auth/session` | GET | check session status |
+| `/auth/change-password` | POST | requires a session; min 8 characters |
+
+- **Change the default password.** First start creates `admin` / `change-me` in
+  `utils/auth-users.json`. That file isn't committed, but any deployment left on the
+  default is wide open.
+- `/api/config`, `/api/debug/env` and `/api/restart` require a session — they expose TMDB
+  keys and accept writes.
+- `utils/auth-users.json`, `utils/user-config.json` and `.env` are gitignored: they hold
+  per-deployment credentials and state.
+
+> **Neither server authenticates its stream endpoints**, and the MP4 API has no auth at
+> all. Don't expose either to the public internet — keep them on a LAN or VPN, or behind a
+> reverse proxy that requires auth.
+
+---
+
+## 🚀 Deployment
+
+### systemd (the MP4 API)
+
+`run.sh` installs a `movapi` service that runs `vidzee-mp4.js` on `:6150`. It's
+idempotent — re-run it to update the unit and restart.
+
+```bash
+sudo bash run.sh          # install + enable + start
+bash run.sh --dry-run     # print what it would do, no root needed
+```
+
+It resolves `node` through the invoking user's login shell (so nvm works), verifies
+ffmpeg is present, and runs as the invoking user rather than root.
+
+```bash
+systemctl status movapi
+journalctl -u movapi -f
+```
+
+### Docker (the aggregator)
+
+```bash
+docker build -t tmdb-embed-api .
+docker run --name tmdb-embed -p 8787:8787 \
+  -v "$(pwd)/utils/user-config.json:/app/utils/user-config.json" \
+  tmdb-embed-api
+```
+
+Or `docker compose up -d --build`. Mounting `utils/user-config.json` persists admin-UI settings
+across restarts. The container healthcheck hits `GET /api/health`.
+
+The Dockerfile builds the aggregator only — it doesn't include ffmpeg, so the MP4 API
+won't run in it unmodified.
+
+### Notes
+
 | Aspect | Recommendation |
 |--------|---------------|
-| Node Version | 18+ LTS |
-| Reverse Proxy | Terminate TLS (e.g., Nginx) and forward to API port |
-| Persistent Config | Mount / persist `utils/user-config.json` |
-| Logs | Pipe stdout to centralized logger |
-| Scaling | Use a single instance unless providers are CPU bound |
+| Node | 18+ LTS |
+| TLS | terminate at nginx and forward to the API port |
+| Persistence | mount `utils/user-config.json` |
+| Scaling | single instance; the MP4 API is one ffmpeg process per stream |
 
-For ephemeral platforms (e.g., Vercel) note that some providers use temporary directories; avoid enabling disk-heavy cache directories.
+---
+
+## 🧪 Tests
+
+```bash
+npm test      # node --test
+npm run lint  # eslint
+```
+
+25 tests, no network required. They cover VidZee URL construction and response
+normalisation, the provider catalog's integrity (every catalogued export exists; helpers
+aren't providers), config normalisation, and the playability heuristics that keep
+PNG-wrapped sources away from ffmpeg.
 
 ---
 
 ## 💡 Troubleshooting
-| Symptom | Cause / Fix |
+
+| Symptom | Cause / fix |
 |---------|------------|
-| TMDB quota issues | Add more keys under Keys panel |
-| Provider missing in matrix | Ensure its enable flag exists & UI updated |
-| Empty merged config after restart | `user-config.json` deleted or unreadable |
-| Streams low quality | Adjust min quality preset or custom JSON |
+| `Cannot find module 'express'` | `npm install` hasn't been run in this directory |
+| MP4 API returns `404 no playable source` | every VidZee server is down or blocked for that title; try `?sr=` to test individually |
+| MP4 API returns `502 remux failed` | a source was picked but ffmpeg couldn't open it — check ffmpeg is installed |
+| Aggregate returns `count: 0` | expected for titles VidZee doesn't have; the other providers return nothing |
+| Streams give `403` when fetched | you dropped the `headers` from the stream object — `Referer` is required |
+| `/api/config` returns `401` | log in first; it's session-gated |
+| Everything 404s from VidZee | they rotated again — see [How the VidZee provider works](#-how-the-vidzee-provider-works) |
 
 ---
 
-## 🤝 Contributing
-PRs welcome. Keep changes focused and avoid unrelated formatting churn. For new providers include:
-- A short rationale
-- Retry / timeout safeguards
-- Respect for existing filtering structure
+## 📜 License & credits
 
----
+MIT — see [LICENSE.md](LICENSE.md).
 
-## ❤️ Sponsorship
-If this project helps you, consider sponsoring to support continued development & maintenance:
+Forked from [Inside4ndroid/TMDB-Embed-API](https://github.com/Inside4ndroid/TMDB-Embed-API),
+© 2025 Inside4ndroid, which is where the aggregator, admin UI, proxy layer, filtering and
+every non-VidZee provider come from. Upstream also credits the original NuvioStreamsAddon
+work for earlier concepts. If you find this useful, the credit belongs there:
+[GitHub Sponsors](https://github.com/sponsors/Inside4ndroid).
 
-➡️ **GitHub Sponsors:** https://github.com/sponsors/Inside4ndroid
-
-Every contribution accelerates feature delivery & sustainability.
-
----
-
-## 📜 License
-MIT. See `LICENSE`.
-
----
-
-## 🙏 Acknowledgements
-Inspired by community scraping/stream aggregation efforts. Credits also to the original NuvioStreamsAddon work for earlier concepts.
-
----
-
-> *Happy streaming & hacking!* ✨
-
----
+See [CHANGELOG.md](CHANGELOG.md) for what diverges.
