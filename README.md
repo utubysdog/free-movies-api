@@ -9,14 +9,11 @@
   <img src="https://img.shields.io/badge/ffmpeg-required-orange?style=flat" />
 </p>
 
-A fork of [Inside4ndroid/TMDB-Embed-API](https://github.com/Inside4ndroid/TMDB-Embed-API)
-(MIT, © 2025 Inside4ndroid) that has drifted a long way from upstream in two respects:
+A fork of [neilbauman21-hub/free-moveis-api](https://github.com/neilbauman21-hub/free-moveis-api) that has drifted a long way from upstream in two respects:
 
-1. **VidZee is the only provider that still works.** The other six are inherited from
-   upstream and currently return nothing on every title tested. See [Providers](#-providers).
-2. **It gained a download/streaming API.** `vidzee-mp4.js` serves the actual video as
-   `video/mp4` — point VLC, mpv, a browser `<video>`, or `curl -O` at a URL and it plays
-   or saves. That's the part this fork exists for.
+1. Works out of the box (at least with openSUSE Tumbleweed 20261014)
+
+2. Has rife interpolation support
 
 ---
 
@@ -39,6 +36,9 @@ This repo runs two independent processes. You can run either on its own.
 
 - **Node.js 18+**
 - **ffmpeg + ffprobe** on `PATH` — only for the MP4 API. Ubuntu/Debian: `sudo apt install ffmpeg`
+```bash
+zypper in ffmpeg
+```
 - A **TMDB API key** is optional; VidZee is keyed by TMDB id but needs no key of your own.
   Keys only matter for the IMDb resolution and the (dead) Showbox provider.
 
@@ -50,9 +50,8 @@ npm install
 
 ## 🎬 MP4 / Download API (`:6150`)
 
-The centrepiece of this fork. Resolves a VidZee source, then remuxes its HLS stream into
-a fragmented MP4 with `ffmpeg -c copy` — no re-encoding, so it's cheap and keeps the
-original H.264/AAC quality.
+The centerpiece of this fork. Resolves a VidZee source, then remuxes its HLS stream into
+a fragmented MP4.
 
 ```bash
 npm run start:mp4          # or: node vidzee-mp4.js
@@ -66,10 +65,11 @@ npm run start:mp4          # or: node vidzee-mp4.js
 | `GET /tv/<tmdbId>/<season>/<episode>` | the episode as `video/mp4` |
 | `GET /health` | `{ ok: true, service: "vidzee-mp4" }` |
 
-| Query | Purpose |
-|-------|---------|
+| Query         | Purpose                                                                      |
+| ------------- | ---------------------------------------------------------------------------- |
 | `?download=1` | send `Content-Disposition: attachment` — saves instead of playing in-browser |
-| `?sr=<name>` | force a specific VidZee server instead of auto-selecting |
+| `?sr=<name>`  | force a specific VidZee server instead of auto-selecting                     |
+| `?rife=1`     | use rife interpolation at 40FPS                                              |
 
 ### Examples
 
@@ -402,16 +402,3 @@ PNG-wrapped sources away from ffmpeg.
 | `/api/config` returns `401` | log in first; it's session-gated |
 | Everything 404s from VidZee | they rotated again — see [How the VidZee provider works](#-how-the-vidzee-provider-works) |
 
----
-
-## 📜 License & credits
-
-MIT — see [LICENSE.md](LICENSE.md).
-
-Forked from [Inside4ndroid/TMDB-Embed-API](https://github.com/Inside4ndroid/TMDB-Embed-API),
-© 2025 Inside4ndroid, which is where the aggregator, admin UI, proxy layer, filtering and
-every non-VidZee provider come from. Upstream also credits the original NuvioStreamsAddon
-work for earlier concepts. If you find this useful, the credit belongs there:
-[GitHub Sponsors](https://github.com/sponsors/Inside4ndroid).
-
-See [CHANGELOG.md](CHANGELOG.md) for what diverges.
